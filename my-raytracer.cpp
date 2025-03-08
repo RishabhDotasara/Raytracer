@@ -2,7 +2,7 @@
 #include <fstream>
 #include <cmath>
 #include <vector>
-#include <algorithm> // for std::min and std::max
+#include <algorithm>
 
 struct Vec3 
 {
@@ -29,7 +29,7 @@ struct Ray
 {
     Vec3 origin, direction;
     Ray(const Vec3& o, const Vec3& d) : origin(o), direction(d.normalize()) {}
-}; // 🔴 Missing semicolon fixed!
+};
 
 struct Sphere 
 {
@@ -46,13 +46,13 @@ struct Sphere
         float c = oc.dot(oc) - (radius * radius);
         float d = b * b - 4 * a * c; // Discriminant
 
-        if (d < 0) return false; // No intersection
+        if (d < 0) return false;
 
         float t0 = (-b - std::sqrt(d)) / (2 * a);
         float t1 = (-b + std::sqrt(d)) / (2 * a);
         t = (t0 > 0) ? t0 : t1;
 
-        if (t < 0) return false; // Intersection behind the camera
+        if (t < 0) return false;
 
         hitPoint = ray.origin + ray.direction * t;
         normal = (hitPoint - center).normalize();
@@ -64,28 +64,54 @@ struct LightSource
 {
     Vec3 position;
     LightSource(const Vec3& p) : position(p) {}
-}; 
+};
 
-Vec3 trace(const Ray& ray, const LightSource& light, const Sphere& sphere)
+Vec3 trace(const Ray& ray, std::vector<LightSource>& lights, std::vector<Sphere>& spheres)
 {
     Vec3 hitPoint, normal;
-    float t;
+    float t, tClosest = 1e6;
+    Sphere* hitSphere = nullptr;
+
+    for (auto& s : spheres) 
+    {
+        if (s.intersect(ray, t, hitPoint, normal) && t < tClosest) 
+        {
+            tClosest = t;
+            hitSphere = &s;
+        }
+    }
+
+    if (!hitSphere) return Vec3(0, 0, 0);
+
+    hitPoint = ray.origin + ray.direction * tClosest;
+    normal = (hitPoint - hitSphere->center).normalize();
+    Vec3 finalColor(0, 0, 0);
     
-    if (!sphere.intersect(ray, t, hitPoint, normal)) 
-        return Vec3(0, 0, 0); // No intersection, return black
+    for (auto& ls : lights)
+    {
+        Vec3 lightDir = (ls.position - hitPoint).normalize();
+        Ray shadowRay(hitPoint + lightDir * 0.001f, lightDir);
+        bool isShadow = false;
 
-    // Shadow Ray
-    Vec3 lightDir = (light.position - hitPoint).normalize();
-    Ray shadowRay(hitPoint + lightDir * 0.001f, lightDir); // Offset to avoid self-shadowing
+        for (auto& s : spheres) 
+        {
+            float tShadow;
+            Vec3 tempHit, tempNormal;
+            if (&s != hitSphere && s.intersect(shadowRay, tShadow, tempHit, tempNormal) && tShadow > 0.001f) 
+            {
+                isShadow = true;
+                break;
+            }
+        }
 
-    float tShadow;
-    Vec3 tempHit, tempNormal;
-    if (sphere.intersect(shadowRay, tShadow, tempHit, tempNormal)) 
-        return Vec3(0, 0, 0); // In shadow, return black
+        if (!isShadow) 
+        {
+            float diff = std::max(0.0f, normal.dot(lightDir));
+            finalColor = finalColor + (hitSphere->color * diff);
+        }
+    }
 
-    // Diffuse shading
-    float diff = std::max(0.0f, normal.dot(lightDir));
-    return sphere.color * diff; // Apply shading
+    return finalColor;
 }
 
 void render(int width, int height) 
@@ -93,23 +119,33 @@ void render(int width, int height)
     std::ofstream image("output.ppm");
     image << "P3\n" << width << " " << height << "\n255\n";
 
+    float aspectRatio = (float)width / height;
     Vec3 camera(0, 0, -5);
-    Sphere sphere(Vec3(0, 0, 0), 1.0f, Vec3(255, 0, 0)); // Red sphere
-    LightSource light(Vec3(-5, 5, -5)); // Light position
+    std::vector<Sphere> spheres = {
+        Sphere(Vec3( 2, -0.5, 3), 1.0f, Vec3(0, 255, 0)),  // Green sphere
+        Sphere(Vec3( 0, -0.5, 0), 1.0f, Vec3(255, 0, 0)),  // Red sphere
+        Sphere(Vec3(-2, -0.5, 3), 1.0f, Vec3(0, 0, 255))   // Blue sphere
+    };
+
+    std::vector<LightSource> lights = {
+        LightSource(Vec3( 5, 5, -2)),  // Top right
+        LightSource(Vec3(-5, 5, -2)),  // Top left
+        LightSource(Vec3( 0, 3, 5))    // Front middle
+    };
 
     for (int y = height - 1; y >= 0; --y) 
     {
         for (int x = 0; x < width; ++x) 
         {
-            float u = (x / (float)width) * 2 - 1;
-            float v = (y / (float)height) * 2 - 1;
+            float u = (2 * (x + 0.5f) / (float)width  - 1) * aspectRatio;
+            float v = 1 - 2 * (y + 0.5f) / (float)height;
 
             Ray ray(camera, Vec3(u, v, 0) - camera);
-            Vec3 color = trace(ray, light, sphere);
+            Vec3 color = trace(ray, lights, spheres);
 
-            int r = std::min(255, (int)color.x);
-            int g = std::min(255, (int)color.y);
-            int b = std::min(255, (int)color.z);
+            int r = std::max(0, std::min(255, (int)color.x));
+            int g = std::max(0, std::min(255, (int)color.y));
+            int b = std::max(0, std::min(255, (int)color.z));
 
             image << r << " " << g << " " << b << "\n";
         }
@@ -120,7 +156,7 @@ void render(int width, int height)
 
 int main() 
 {
-    render(400, 400);
+    render(3840, 2160);
     std::cout << "Rendered output.ppm\n";
     return 0;
 }
