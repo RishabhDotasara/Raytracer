@@ -3,6 +3,7 @@
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include <omp.h>
 
 struct Vec3 
 {
@@ -35,8 +36,9 @@ struct Sphere
 {
     Vec3 center, color;
     float radius;
+    float reflectivity=0.2f;
 
-    Sphere(const Vec3& c, float r, const Vec3& col) : center(c), radius(r), color(col) {}
+    Sphere(const Vec3& c, float r, const Vec3& col, float ref) : center(c), radius(r), color(col), reflectivity(ref) {}
 
     bool intersect(const Ray& ray, float& t, Vec3& hitPoint, Vec3& normal) const
     {
@@ -66,7 +68,7 @@ struct LightSource
     LightSource(const Vec3& p) : position(p) {}
 };
 
-Vec3 trace(const Ray& ray, std::vector<LightSource>& lights, std::vector<Sphere>& spheres)
+Vec3 trace(const Ray& ray, std::vector<LightSource>& lights, std::vector<Sphere>& spheres, int depth=3)
 {
     Vec3 hitPoint, normal;
     float t, tClosest = 1e6;
@@ -90,7 +92,7 @@ Vec3 trace(const Ray& ray, std::vector<LightSource>& lights, std::vector<Sphere>
     for (auto& ls : lights)
     {
         Vec3 lightDir = (ls.position - hitPoint).normalize();
-        Ray shadowRay(hitPoint + lightDir * 0.001f, lightDir);
+        Ray shadowRay(hitPoint + lightDir * 0.01f, lightDir);
         bool isShadow = false;
 
         for (auto& s : spheres) 
@@ -102,6 +104,15 @@ Vec3 trace(const Ray& ray, std::vector<LightSource>& lights, std::vector<Sphere>
                 isShadow = true;
                 break;
             }
+        }
+
+        if (depth > 0 && hitSphere->reflectivity > 0.01f)
+        {
+            Vec3 RDirn =  ray.direction - normal * 2 *  ray.direction.dot(normal);
+            // std::cout<<depth;
+            Ray reflectedRay(hitPoint, RDirn.normalize());
+            Vec3 reflectedColor = trace(reflectedRay, lights, spheres, depth -1);
+            finalColor = finalColor * (1 - hitSphere->reflectivity) + reflectedColor * hitSphere->reflectivity;
         }
 
         if (!isShadow) 
@@ -120,23 +131,24 @@ void render(int width, int height)
     image << "P3\n" << width << " " << height << "\n255\n";
 
     float aspectRatio = (float)width / height;
-    Vec3 camera(0, 0, -5);
+    Vec3 camera(0, 0, -10);
     std::vector<Sphere> spheres = {
-        Sphere(Vec3( 2, -0.5, 3), 1.0f, Vec3(0, 255, 0)),  // Green sphere
-        Sphere(Vec3( 0, -0.5, 0), 1.0f, Vec3(255, 0, 0)),  // Red sphere
-        Sphere(Vec3(-2, -0.5, 3), 1.0f, Vec3(0, 0, 255))   // Blue sphere
+        Sphere(Vec3( 2, -0.5, 3), 1.0f, Vec3(0, 255, 0),0.2),  // Green sphere
+        Sphere(Vec3( 0, -0.5, 5), 1.0f, Vec3(255, 0, 0),0.7),  // Red sphere
+        Sphere(Vec3(-2, -0.5, 3), 1.0f, Vec3(0, 0, 255),0.2)   // Blue sphere
     };
 
     std::vector<LightSource> lights = {
         LightSource(Vec3( 5, 5, -2)),  // Top right
         LightSource(Vec3(-5, 5, -2)),  // Top left
         LightSource(Vec3( 0, 3, 5))    // Front middle
-    };
-
+    };  
+    #pragma omp parallel for schedule(dynamic) collapse(2)
     for (int y = height - 1; y >= 0; --y) 
     {
         for (int x = 0; x < width; ++x) 
         {
+            std::cout<<"Pixel:"<<x<<" "<<y<<std::endl;
             float u = (2 * (x + 0.5f) / (float)width  - 1) * aspectRatio;
             float v = 1 - 2 * (y + 0.5f) / (float)height;
 
@@ -146,7 +158,7 @@ void render(int width, int height)
             int r = std::max(0, std::min(255, (int)color.x));
             int g = std::max(0, std::min(255, (int)color.y));
             int b = std::max(0, std::min(255, (int)color.z));
-
+            #pragma omp critical
             image << r << " " << g << " " << b << "\n";
         }
     }
@@ -156,7 +168,7 @@ void render(int width, int height)
 
 int main() 
 {
-    render(3840, 2160);
+    render(3840,2160);
     std::cout << "Rendered output.ppm\n";
     return 0;
 }
